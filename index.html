@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Web Serial API Demo</title>
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>Web Serial API Tester</h1>
+
+    <div class="controls">
+      <button id="connectBtn">Connect</button>
+      <button id="disconnectBtn" disabled>Disconnect</button>
+    </div>
+
+    <div class="send-panel">
+      <input
+        type="text"
+        id="messageInput"
+        placeholder="Type message..."
+      />
+      <button id="sendBtn" disabled>Send</button>
+    </div>
+
+    <div class="terminal">
+      <h3>Received Data</h3>
+      <pre id="output"></pre>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
