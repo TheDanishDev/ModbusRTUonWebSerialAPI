@@ -1,0 +1,36 @@
+{
+  "name": "modbusrtuonwebserialapi",
+  "version": "0.0.1",
+  "description": "",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsc",
+    "clean": "rimraf dist",
+    "prepublishOnly": "npm run build",
+    "test:browser": "vitest --config=vitest.browser.config.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheDanishDev/ModbusRTUonWebSerialAPI.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/TheDanishDev/ModbusRTUonWebSerialAPI/issues"
+  },
+  "homepage": "https://github.com/TheDanishDev/ModbusRTUonWebSerialAPI#readme",
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@vitest/browser": "^5.0.2",
+    "@vitest/browser-playwright": "^5.0.2",
+    "playwright": "^1.63.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}

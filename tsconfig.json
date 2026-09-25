@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",                          /* Versione JavaScript di output */
+    "module": "NodeNext",                        /* Supporto moderno per moduli (ESM/CJS) */
+    "moduleResolution": "NodeNext",
+    "declaration": true,                         /* Genera i file .d.ts per i tipi della libreria */
+    "declarationMap": true,                      /* Mappa i file dei tipi per facilitare il debug */
+    "outDir": "./dist",                          /* Cartella di output */
+    "rootDir": "./src",                          /* Cartella sorgente */
+    "strict": true,                              /* Abilita controlli di tipo rigorosi */
+    "esModuleInterop": true,                     /* Compatibilità con moduli CommonJS */
+    "skipLibCheck": true,                        /* Salta il controllo delle librerie esterne per velocità */
+    "forceConsistentCasingInFileNames": true,     /* Evita problemi tra sistemi operativi diversi */
+    "types": ["vitest/globals"]
+  },
+  "include": ["src/**/*"]                        /* Compila solo i file in src */
+}
