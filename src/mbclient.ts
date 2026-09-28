@@ -1,5 +1,6 @@
 import { appendCRC16, calculateCRC16 } from './protocol/crc16.js';
 
+
 export enum ModbusFunctionCode {
     ReadCoils = 0x01,
     ReadDiscreteInputs = 0x02,
