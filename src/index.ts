@@ -1,1 +1,1 @@
-export * from './mbclient.js';
+export * from './mbmaster.js';
