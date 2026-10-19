@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Modbus RTU on Web Serial API - Test Page</title>
+  <link rel="stylesheet" href="./src/test-page/style.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="header-top">
+        <h1>
+          <span>⚡ Modbus RTU Tester</span>
+          <span id="statusBadge" class="badge disconnected">disconnected</span>
+        </h1>
+        <div id="statusText" class="subtitle">Disconnected</div>
+      </div>
+      <p class="subtitle">Test page connecting via Web Serial API to read holding registers 1 to 10.</p>
+    </header>
+
+    <div id="browserWarning" class="alert-banner" style="display: none;">
+      ⚠️ <strong>Browser Compatibility:</strong> The Web Serial API is only supported in Chromium-based browsers (Google Chrome, Microsoft Edge, Opera). Please open this page in a supported browser.
+    </div>
+
+    <!-- Connection & Controls Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>⚙️ Connection & Parameters</span>
+      </div>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="baudRateSelect">Baud Rate</label>
+          <select id="baudRateSelect">
+            <option value="9600" selected>9600</option>
+            <option value="19200">19200</option>
+            <option value="38400">38400</option>
+            <option value="57600">57600</option>
+            <option value="115200">115200</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="slaveIdInput">Slave ID (Device)</label>
+          <input type="number" id="slaveIdInput" value="1" min="1" max="247" />
+        </div>
+
+        <div class="form-group">
+          <label for="startAddrInput">Start Register Address</label>
+          <input type="number" id="startAddrInput" value="1" min="0" max="65535" />
+        </div>
+
+        <div class="form-group">
+          <label for="quantityInput">Quantity (Count)</label>
+          <input type="number" id="quantityInput" value="10" min="1" max="125" />
+        </div>
+      </div>
+
+      <div class="button-group">
+        <button id="connectBtn" class="btn-primary">
+          🔌 Select COM Port &amp; Read (1 - 10)
+        </button>
+        <button id="readBtn" class="btn-success" disabled>
+          🔄 Read Registers
+        </button>
+        <button id="simBtn" class="btn-secondary">
+          🧪 Test Simulation (MockPort)
+        </button>
+        <button id="disconnectBtn" class="btn-danger" disabled>
+          ⏹️ Disconnect
+        </button>
+      </div>
+    </div>
+
+    <!-- Results Table Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>📊 Holding Registers (1 to 10)</span>
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Index</th>
+              <th>Register Address</th>
+              <th>Dec (uint16)</th>
+              <th>Dec (int16)</th>
+              <th>Hex</th>
+              <th>Binary</th>
+            </tr>
+          </thead>
+          <tbody id="resultsTableBody">
+          </tbody>
+        </table>
+        <div id="emptyState" class="empty-state">
+          No registers read yet. Click <strong>"Select COM Port &amp; Read"</strong> or <strong>"Test Simulation"</strong> to begin.
+        </div>
+      </div>
+    </div>
+
+    <!-- Communication Log Terminal Card -->
+    <div class="card">
+      <div class="terminal-header">
+        <div class="card-title" style="margin-bottom: 0;">
+          <span>💻 Communication Log (TX / RX)</span>
+        </div>
+        <button id="clearLogBtn" class="btn-secondary btn-sm">Clear Log</button>
+      </div>
+      <div id="terminalOutput" class="terminal-box"></div>
+    </div>
+  </div>
+
+  <script type="module" src="./src/test-page/app.ts"></script>
+</body>
+</html>
