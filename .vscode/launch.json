@@ -2,11 +2,36 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "type": "chrome",
+      "request": "launch",
+      "name": "Debug Webpage (Chrome - Auto-start server)",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}",
+      "sourceMaps": true,
+      "preLaunchTask": "Start Dev Server"
+    },
+    {
+      "type": "chrome",
+      "request": "launch",
+      "name": "Debug Webpage (Chrome)",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}",
+      "sourceMaps": true
+    },
+    {
+      "type": "msedge",
+      "request": "launch",
+      "name": "Debug Webpage (Edge)",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}",
+      "sourceMaps": true
+    },
+    {
       "type": "node",
       "request": "launch",
       "name": "Debug Vitest",
       "autoAttachChildProcesses": true,
-      "program": "${workspaceRoot}/node_modules/vitest/vitest.mjs",
+      "program": "${workspaceFolder}/node_modules/vitest/vitest.mjs",
       "args": ["run"],
       "smartStep": true,
       "console": "integratedTerminal"
