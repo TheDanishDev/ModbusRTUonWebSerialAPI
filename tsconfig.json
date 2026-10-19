@@ -1,17 +1,17 @@
 {
   "compilerOptions": {
-    "target": "ES2022",                          /* Versione JavaScript di output */
-    "module": "NodeNext",                        /* Supporto moderno per moduli (ESM/CJS) */
+    "target": "ES2022",                          /* Output JavaScript version */
+    "module": "NodeNext",                        /* Modern module support (ESM/CJS) */
     "moduleResolution": "NodeNext",
-    "declaration": true,                         /* Genera i file .d.ts per i tipi della libreria */
-    "declarationMap": true,                      /* Mappa i file dei tipi per facilitare il debug */
-    "outDir": "./dist",                          /* Cartella di output */
-    "rootDir": "./src",                          /* Cartella sorgente */
-    "strict": true,                              /* Abilita controlli di tipo rigorosi */
-    "esModuleInterop": true,                     /* Compatibilità con moduli CommonJS */
-    "skipLibCheck": true,                        /* Salta il controllo delle librerie esterne per velocità */
-    "forceConsistentCasingInFileNames": true,     /* Evita problemi tra sistemi operativi diversi */
+    "declaration": true,                         /* Generate .d.ts files for library types */
+    "declarationMap": true,                      /* Map type declaration files to facilitate debugging */
+    "outDir": "./dist",                          /* Output directory */
+    "rootDir": "./src",                          /* Source root directory */
+    "strict": true,                              /* Enable all strict type-checking options */
+    "esModuleInterop": true,                     /* Compatibility with CommonJS modules */
+    "skipLibCheck": true,                        /* Skip type checking of declaration files for speed */
+    "forceConsistentCasingInFileNames": true,     /* Ensure that casing is correct in imports */
     "types": ["vitest/globals"]
   },
-  "include": ["src/**/*"]                        /* Compila solo i file in src */
+  "include": ["src/**/*"]                        /* Compile only files in src */
 }

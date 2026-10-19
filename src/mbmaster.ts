@@ -7,7 +7,7 @@ export enum ModbusFunctionCode {
     ReadInputRegisters = 0x04,
     WriteSingleCoil = 0x05,
     WriteSingleRegister = 0x06,
-    ReadExceptionStatus = 0x07, // Usato raramente sulle seriali moderne
+    ReadExceptionStatus = 0x07, // Rarely used on modern serial lines
     Diagnostics = 0x08,
     WriteMultipleCoils = 0x0F,
     WriteMultipleRegisters = 0x10,
@@ -49,13 +49,13 @@ export class ModbusMaster {
 
     static buildReadRequest(slaveAddress: number, register: ModbusRegisterType, address: number, length: number): Uint8Array {
         if (length < 1)
-            throw new RangeError("La lunghezza della richiesta Modbus deve essere maggiore di 0.");
+            throw new RangeError("Modbus request length must be greater than 0.");
 
         const isCoilOrDiscrete = register === 'coil' || register === 'discrete';
-        const maxLength = isCoilOrDiscrete ? 2000 : 125; // Limiti standard del protocollo Modbus
+        const maxLength = isCoilOrDiscrete ? 2000 : 125; // Standard Modbus protocol limits
 
         if (length > maxLength)
-            throw new RangeError(`Lunghezza massima superata per il tipo '${register}'. Massimo consentito: ${maxLength}.`);
+            throw new RangeError(`Maximum length exceeded for type '${register}'. Maximum allowed: ${maxLength}.`);
 
         const request = new Uint8Array(6);
         const viewrequest = new DataView(request.buffer);
@@ -81,6 +81,7 @@ export class ModbusMaster {
             viewrequest.setUint16(7 + 2 * i, data[i], false);
         return appendCRC16(request);
     }
+
     static buildWriteCoilsRequest(slaveAddress: number, address: number, data: boolean[]): Uint8Array {
         const byteCount = (data.length + 7) >> 3;
         const request = new Uint8Array(byteCount + 7);
@@ -89,8 +90,8 @@ export class ModbusMaster {
         viewrequest.setUint8(0, slaveAddress);      //slave id
         viewrequest.setUint8(1, ModbusFunctionCode.WriteMultipleCoils);       //function code
         viewrequest.setUint16(2, address, false);   //start address
-        viewrequest.setUint16(4, data.length, false);       //quantity of registers
-        viewrequest.setUint8(6, byteCount);       //quantity in bytes
+        viewrequest.setUint16(4, data.length, false);       //quantity of coils
+        viewrequest.setUint8(6, byteCount);       //byte count
         for (let i = 0; i < data.length; i++) {
         if (data[i]) {
             const byteIndex = 7 + Math.floor(i / 8);
@@ -101,5 +102,8 @@ export class ModbusMaster {
 
         return appendCRC16(request);
     }
+
+    
+
 
 }
