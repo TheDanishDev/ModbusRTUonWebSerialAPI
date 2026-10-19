@@ -103,9 +103,27 @@ export interface ModbusTag {
     timestamp?: Date;
 }
 
+export interface DeviceOptions {
+    swapBytes?: boolean;
+    swapWords?: boolean;
+}
+
+export interface DeviceProperty {
+    id: number;
+    swapBytes: boolean;
+    swapWords: boolean;
+    delayIfEmptyQueue: number;
+}
+
 export interface QueueAction {
+    key?: string;
     action: ModbusAction;
     tag: ModbusTag;
+    len?: number;
+    value?: any;
+    resolve?: (value: any) => void;
+    reject?: (reason?: any) => void;
+    promise?: Promise<any>;
 }
 
 /**
