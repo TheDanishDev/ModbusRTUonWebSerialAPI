@@ -48,7 +48,7 @@ export class ModbusMaster {
      */
     setDeviceProperty(
         id: number,
-        option: 'swapBytes' | 'swapWords' | DeviceOptions,
+        option: 'swapBytes' | 'swapWords' | 'mergeRequest' | DeviceOptions,
         delayIfEmptyQueue: number = 10
     ): DeviceProperty {
         const existing: DeviceProperty = this.deviceProperties.get(id) ?? {
@@ -56,6 +56,8 @@ export class ModbusMaster {
             swapBytes: false,
             swapWords: false,
             delayIfEmptyQueue: 10,
+            mergeRequest: true,
+            maxMergeGap: 2,
         };
 
         if (typeof option === 'string') {
@@ -63,6 +65,8 @@ export class ModbusMaster {
                 existing.swapBytes = true;
             } else if (option === 'swapWords') {
                 existing.swapWords = true;
+            } else if (option === 'mergeRequest') {
+                existing.mergeRequest = true;
             }
         } else if (typeof option === 'object' && option !== null) {
             if (typeof option.swapBytes === 'boolean') {
@@ -70,6 +74,12 @@ export class ModbusMaster {
             }
             if (typeof option.swapWords === 'boolean') {
                 existing.swapWords = option.swapWords;
+            }
+            if (typeof option.mergeRequest === 'boolean') {
+                existing.mergeRequest = option.mergeRequest;
+            }
+            if (typeof option.maxMergeGap === 'number') {
+                existing.maxMergeGap = option.maxMergeGap;
             }
         }
 
@@ -91,6 +101,8 @@ export class ModbusMaster {
             swapBytes: false,
             swapWords: false,
             delayIfEmptyQueue: 10,
+            mergeRequest: true,
+            maxMergeGap: 2,
         };
     }
 
@@ -359,31 +371,159 @@ export class ModbusMaster {
     }
 
     /**
-     * Processes pending items in the request queue sequentially.
+     * Finds and batches pending read requests in the queue that target the same device ID
+     * and register type, within protocol limits.
+     */
+    private findMergeableBatch(firstTask: QueueAction, devProp: DeviceProperty): QueueAction[] {
+        if (!devProp.mergeRequest || firstTask.action !== 'read') {
+            return [firstTask];
+        }
+
+        const isCoilOrDiscrete = firstTask.tag.register === 'coil' || firstTask.tag.register === 'discrete';
+        const maxLength = isCoilOrDiscrete ? 2000 : 125;
+        const maxGap = devProp.maxMergeGap ?? 2;
+
+        const batch: QueueAction[] = [firstTask];
+        let batchStart = firstTask.tag.address;
+        let batchEnd = firstTask.tag.address + (firstTask.len ?? 1);
+
+        const extractedIndices: number[] = [];
+
+        for (let i = 0; i < this.queue.length; i++) {
+            const task = this.queue[i];
+
+            // 1. Must be a read action
+            if (task.action !== 'read') continue;
+
+            // 2. CRITICAL: MUST be the exact same device ID
+            if (task.tag.id !== firstTask.tag.id) continue;
+
+            // 3. Must be the exact same register type
+            if (task.tag.register !== firstTask.tag.register) continue;
+
+            const taskStart = task.tag.address;
+            const taskEnd = taskStart + (task.len ?? 1);
+
+            // 4. Check if near enough (within maxGap)
+            const gap = Math.max(0, taskStart - batchEnd, batchStart - taskEnd);
+            if (gap > maxGap) continue;
+
+            // 5. Check if total span does not exceed Modbus limits
+            const potentialStart = Math.min(batchStart, taskStart);
+            const potentialEnd = Math.max(batchEnd, taskEnd);
+            if (potentialEnd - potentialStart > maxLength) continue;
+
+            // Merge into current batch
+            batch.push(task);
+            batchStart = potentialStart;
+            batchEnd = potentialEnd;
+            extractedIndices.push(i);
+        }
+
+        // Remove merged items from queue in reverse order
+        for (let j = extractedIndices.length - 1; j >= 0; j--) {
+            this.queue.splice(extractedIndices[j], 1);
+        }
+
+        return batch;
+    }
+
+    /**
+     * Processes pending items in the request queue, merging adjacent reads for the same device ID.
      */
     public async processQueue(): Promise<void> {
         if (this.isProcessing || this.queue.length === 0) return;
         if (!this.port || !this.port.connected) return;
 
         this.isProcessing = true;
+        // Yield microtask to allow synchronous callers in the same tick to finish adding requests to queue
+        await Promise.resolve();
+
+        if (!this.port || !this.port.connected || this.queue.length === 0) {
+            this.isProcessing = false;
+            return;
+        }
+
         const currentTask = this.queue.shift();
 
         if (currentTask) {
+            const devProp = this.getDeviceProperty(currentTask.tag.id);
+            const batch = this.findMergeableBatch(currentTask, devProp);
+
             try {
                 if (!this.port.writable || !this.port.readable) {
                     throw new Error("Port readable or writable stream is not available.");
                 }
 
-                const devProp = this.getDeviceProperty(currentTask.tag.id);
                 let requestFrame: Uint8Array;
 
                 if (currentTask.action === 'read') {
+                    const isCoilOrDiscrete = currentTask.tag.register === 'coil' || currentTask.tag.register === 'discrete';
+                    const batchStart = Math.min(...batch.map(t => t.tag.address));
+                    const batchEnd = Math.max(...batch.map(t => t.tag.address + (t.len ?? 1)));
+                    const batchLength = batchEnd - batchStart;
+
                     requestFrame = ModbusMaster.buildReadRequest(
                         currentTask.tag.id,
                         currentTask.tag.register,
-                        currentTask.tag.address,
-                        currentTask.len ?? 1
+                        batchStart,
+                        batchLength
                     );
+
+                    // Send request frame
+                    const writer = this.port.writable.getWriter();
+                    await writer.write(requestFrame);
+                    writer.releaseLock();
+
+                    // Receive response frame
+                    const response = await this.readResponse(this.responseTimeoutMs);
+
+                    if (!verifyCRC16(response)) {
+                        throw new Error("Modbus CRC verification failed on received response.");
+                    }
+
+                    if ((response[1] & 0x80) !== 0) {
+                        throw new Error(`Modbus exception response: code ${response[2]}`);
+                    }
+
+                    if (isCoilOrDiscrete) {
+                        const allBits: boolean[] = [];
+                        for (let i = 0; i < batchLength; i++) {
+                            const byteIdx = 3 + Math.floor(i / 8);
+                            const bitIdx = i % 8;
+                            allBits.push((response[byteIdx] & (1 << bitIdx)) !== 0);
+                        }
+
+                        for (const task of batch) {
+                            const offset = task.tag.address - batchStart;
+                            const taskLen = task.len ?? 1;
+                            const taskBits = allBits.slice(offset, offset + taskLen);
+                            const parsed = (taskLen === 1 && !task.tag.type.includes('[')) ? taskBits[0] : taskBits;
+
+                            task.tag.value = parsed;
+                            task.tag.timestamp = new Date();
+                            task.resolve?.(parsed);
+                        }
+                    } else {
+                        const byteCount = response[2];
+                        const regCount = byteCount / 2;
+                        const allRegisters = new Uint16Array(regCount);
+                        const view = new DataView(response.buffer, response.byteOffset + 3, byteCount);
+                        for (let i = 0; i < regCount; i++) {
+                            allRegisters[i] = view.getUint16(i * 2, false);
+                        }
+
+                        for (const task of batch) {
+                            const offset = task.tag.address - batchStart;
+                            const taskLen = task.len ?? 1;
+                            const taskRegisters = allRegisters.subarray(offset, offset + taskLen);
+                            const parsed = this.parseReadData(taskRegisters, task.tag.type, devProp);
+
+                            task.tag.value = parsed;
+                            task.tag.timestamp = new Date();
+                            task.resolve?.(parsed);
+                        }
+                    }
                 } else {
                     if (currentTask.tag.register === 'coil') {
                         const boolData = Array.isArray(currentTask.tag.value)
@@ -406,50 +546,23 @@ export class ModbusMaster {
                             new Uint16Array(registers)
                         );
                     }
-                }
 
-                // Send request frame
-                const writer = this.port.writable.getWriter();
-                await writer.write(requestFrame);
-                writer.releaseLock();
+                    // Send request frame
+                    const writer = this.port.writable.getWriter();
+                    await writer.write(requestFrame);
+                    writer.releaseLock();
 
-                // Receive response frame
-                const response = await this.readResponse(this.responseTimeoutMs);
+                    // Receive response frame
+                    const response = await this.readResponse(this.responseTimeoutMs);
 
-                if (!verifyCRC16(response)) {
-                    throw new Error("Modbus CRC verification failed on received response.");
-                }
-
-                if ((response[1] & 0x80) !== 0) {
-                    throw new Error(`Modbus exception response: code ${response[2]}`);
-                }
-
-                let parsedValue: any;
-                if (currentTask.action === 'read') {
-                    if (currentTask.tag.register === 'coil' || currentTask.tag.register === 'discrete') {
-                        const bitCount = currentTask.len ?? 1;
-                        const bools: boolean[] = [];
-                        for (let i = 0; i < bitCount; i++) {
-                            const byteIdx = 3 + Math.floor(i / 8);
-                            const bitIdx = i % 8;
-                            bools.push((response[byteIdx] & (1 << bitIdx)) !== 0);
-                        }
-                        parsedValue = (bitCount === 1 && !currentTask.tag.type.includes('[')) ? bools[0] : bools;
-                    } else {
-                        const byteCount = response[2];
-                        const regCount = byteCount / 2;
-                        const registers = new Uint16Array(regCount);
-                        const view = new DataView(response.buffer, response.byteOffset + 3, byteCount);
-                        for (let i = 0; i < regCount; i++) {
-                            registers[i] = view.getUint16(i * 2, false);
-                        }
-                        parsedValue = this.parseReadData(registers, currentTask.tag.type, devProp);
+                    if (!verifyCRC16(response)) {
+                        throw new Error("Modbus CRC verification failed on received response.");
                     }
 
-                    currentTask.tag.value = parsedValue;
-                    currentTask.tag.timestamp = new Date();
-                    currentTask.resolve?.(parsedValue);
-                } else {
+                    if ((response[1] & 0x80) !== 0) {
+                        throw new Error(`Modbus exception response: code ${response[2]}`);
+                    }
+
                     currentTask.tag.timestamp = new Date();
                     currentTask.resolve?.(response);
                 }
@@ -459,7 +572,9 @@ export class ModbusMaster {
                     await new Promise(r => setTimeout(r, devProp.delayIfEmptyQueue));
                 }
             } catch (err) {
-                currentTask.reject?.(err);
+                for (const task of batch) {
+                    task.reject?.(err);
+                }
             } finally {
                 this.isProcessing = false;
                 this.processQueue();
@@ -547,9 +662,11 @@ export class ModbusMaster {
                 swapBytes: Boolean(deviceIdOrOptions.swapBytes),
                 swapWords: Boolean(deviceIdOrOptions.swapWords),
                 delayIfEmptyQueue: 10,
+                mergeRequest: deviceIdOrOptions.mergeRequest !== undefined ? deviceIdOrOptions.mergeRequest : true,
+                maxMergeGap: deviceIdOrOptions.maxMergeGap ?? 2,
             };
         }
-        return { id: 0, swapBytes: false, swapWords: false, delayIfEmptyQueue: 10 };
+        return { id: 0, swapBytes: false, swapWords: false, delayIfEmptyQueue: 10, mergeRequest: true, maxMergeGap: 2 };
     }
 
     static buildReadRequest(slaveAddress: number, register: ModbusRegisterType, address: number, length: number): Uint8Array {

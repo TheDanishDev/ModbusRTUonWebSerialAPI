@@ -106,6 +106,8 @@ export interface ModbusTag {
 export interface DeviceOptions {
     swapBytes?: boolean;
     swapWords?: boolean;
+    mergeRequest?: boolean;
+    maxMergeGap?: number;
 }
 
 export interface DeviceProperty {
@@ -113,6 +115,8 @@ export interface DeviceProperty {
     swapBytes: boolean;
     swapWords: boolean;
     delayIfEmptyQueue: number;
+    mergeRequest: boolean;
+    maxMergeGap?: number;
 }
 
 export interface QueueAction {

@@ -159,6 +159,8 @@ describe('ModbusMaster instance and queue methods', () => {
                 swapBytes: false,
                 swapWords: false,
                 delayIfEmptyQueue: 10,
+                mergeRequest: true,
+                maxMergeGap: 2,
             });
         });
 
@@ -167,6 +169,7 @@ describe('ModbusMaster instance and queue methods', () => {
             const res = master.setDeviceProperty(1, 'swapBytes', 25);
             expect(res.swapBytes).toBe(true);
             expect(res.swapWords).toBe(false);
+            expect(res.mergeRequest).toBe(true);
             expect(res.delayIfEmptyQueue).toBe(25);
 
             expect(master.getDeviceProperty(1)).toEqual({
@@ -174,6 +177,8 @@ describe('ModbusMaster instance and queue methods', () => {
                 swapBytes: true,
                 swapWords: false,
                 delayIfEmptyQueue: 25,
+                mergeRequest: true,
+                maxMergeGap: 2,
             });
         });
 
@@ -182,17 +187,20 @@ describe('ModbusMaster instance and queue methods', () => {
             const res = master.setDeviceProperty(2, 'swapWords', 15);
             expect(res.swapWords).toBe(true);
             expect(res.swapBytes).toBe(false);
+            expect(res.mergeRequest).toBe(true);
             expect(res.delayIfEmptyQueue).toBe(15);
         });
 
         it('should configure property using options object', () => {
             const master = new ModbusMaster();
-            master.setDeviceProperty(3, { swapBytes: true, swapWords: true }, 50);
+            master.setDeviceProperty(3, { swapBytes: true, swapWords: true, mergeRequest: false }, 50);
             expect(master.getDeviceProperty(3)).toEqual({
                 id: 3,
                 swapBytes: true,
                 swapWords: true,
                 delayIfEmptyQueue: 50,
+                mergeRequest: false,
+                maxMergeGap: 2,
             });
         });
     });
@@ -408,6 +416,270 @@ describe('ModbusMaster instance and queue methods', () => {
             };
 
             await expect(master.read(tag)).rejects.toThrow("Modbus exception response: code 2");
+
+            await mockPort.close();
+        });
+    });
+
+    describe('Request merging and batching (mergeRequest)', () => {
+        it('should merge two adjacent read requests for the same device ID into a single Modbus frame', async () => {
+            const mockPort = new MockPort();
+            await mockPort.open({ baudRate: 9600 });
+            const master = new ModbusMaster(mockPort);
+
+            const writtenFrames: Uint8Array[] = [];
+            mockPort.onWrite = (chunk) => {
+                writtenFrames.push(chunk);
+                // Expected request: Slave 1, FC 3, start 0, length 2
+                // Return registers: [0x000A (10), 0x0014 (20)]
+                const resp = appendCRC16(new Uint8Array([0x01, 0x03, 0x04, 0x00, 0x0A, 0x00, 0x14]));
+                mockPort.emitData(resp);
+            };
+
+            const tag1: ModbusTag = { id: 1, register: 'holding', address: 0, type: 'uint16' };
+            const tag2: ModbusTag = { id: 1, register: 'holding', address: 1, type: 'uint16' };
+
+            const [val1, val2] = await Promise.all([master.read(tag1), master.read(tag2)]);
+
+            expect(writtenFrames).toHaveLength(1);
+            // Verify single merged frame parameters
+            const frame = writtenFrames[0];
+            expect(frame[0]).toBe(1);    // Slave ID 1
+            expect(frame[1]).toBe(3);    // FC 0x03
+            expect(frame[2]).toBe(0x00); // Start address high
+            expect(frame[3]).toBe(0x00); // Start address low (0)
+            expect(frame[4]).toBe(0x00); // Quantity high
+            expect(frame[5]).toBe(0x02); // Quantity low (2 registers)
+
+            expect(val1).toBe(10);
+            expect(val2).toBe(20);
+            expect(tag1.value).toBe(10);
+            expect(tag2.value).toBe(20);
+            expect(tag1.timestamp).toBeInstanceOf(Date);
+            expect(tag2.timestamp).toBeInstanceOf(Date);
+
+            await mockPort.close();
+        });
+
+        it('should merge read requests with a gap within maxMergeGap', async () => {
+            const mockPort = new MockPort();
+            await mockPort.open({ baudRate: 9600 });
+            const master = new ModbusMaster(mockPort);
+
+            const writtenFrames: Uint8Array[] = [];
+            mockPort.onWrite = (chunk) => {
+                writtenFrames.push(chunk);
+                // Merged span: start address 10, length 3 (covers 10, 11, 12)
+                // Values: [100, 999, 200]
+                const resp = appendCRC16(new Uint8Array([
+                    0x01, 0x03, 0x06,
+                    0x00, 0x64, // reg 10 = 100
+                    0x03, 0xE7, // reg 11 = 999 (gap register)
+                    0x00, 0xC8  // reg 12 = 200
+                ]));
+                mockPort.emitData(resp);
+            };
+
+            const tag1: ModbusTag = { id: 1, register: 'holding', address: 10, type: 'uint16' };
+            const tag2: ModbusTag = { id: 1, register: 'holding', address: 12, type: 'uint16' };
+
+            const [v1, v2] = await Promise.all([master.read(tag1), master.read(tag2)]);
+
+            expect(writtenFrames).toHaveLength(1);
+            const frame = writtenFrames[0];
+            expect(frame[2]).toBe(0x00);
+            expect(frame[3]).toBe(0x0A); // Start address 10
+            expect(frame[4]).toBe(0x00);
+            expect(frame[5]).toBe(0x03); // Quantity 3
+
+            expect(v1).toBe(100);
+            expect(v2).toBe(200);
+
+            await mockPort.close();
+        });
+
+        it('should NOT merge read requests when gap exceeds maxMergeGap', async () => {
+            const mockPort = new MockPort();
+            await mockPort.open({ baudRate: 9600 });
+            const master = new ModbusMaster(mockPort);
+
+            const writtenFrames: Uint8Array[] = [];
+            mockPort.onWrite = (chunk) => {
+                writtenFrames.push(chunk);
+                const addr = (chunk[2] << 8) | chunk[3];
+                if (addr === 0) {
+                    const resp = appendCRC16(new Uint8Array([0x01, 0x03, 0x02, 0x00, 0x05]));
+                    mockPort.emitData(resp);
+                } else if (addr === 10) {
+                    const resp = appendCRC16(new Uint8Array([0x01, 0x03, 0x02, 0x00, 0x32]));
+                    mockPort.emitData(resp);
+                }
+            };
+
+            const tag1: ModbusTag = { id: 1, register: 'holding', address: 0, type: 'uint16' };
+            const tag2: ModbusTag = { id: 1, register: 'holding', address: 10, type: 'uint16' }; // gap = 9 > 2
+
+            const [v1, v2] = await Promise.all([master.read(tag1), master.read(tag2)]);
+
+            expect(writtenFrames).toHaveLength(2);
+            expect(v1).toBe(5);
+            expect(v2).toBe(50);
+
+            await mockPort.close();
+        });
+
+        it('should NOT merge read requests for DIFFERENT device IDs', async () => {
+            const mockPort = new MockPort();
+            await mockPort.open({ baudRate: 9600 });
+            const master = new ModbusMaster(mockPort);
+
+            const writtenFrames: Uint8Array[] = [];
+            mockPort.onWrite = (chunk) => {
+                writtenFrames.push(chunk);
+                const slaveId = chunk[0];
+                if (slaveId === 1) {
+                    const resp = appendCRC16(new Uint8Array([0x01, 0x03, 0x02, 0x00, 0x6F])); // 111
+                    mockPort.emitData(resp);
+                } else if (slaveId === 2) {
+                    const resp = appendCRC16(new Uint8Array([0x02, 0x03, 0x02, 0x00, 0xDE])); // 222
+                    mockPort.emitData(resp);
+                }
+            };
+
+            const tagSlave1: ModbusTag = { id: 1, register: 'holding', address: 0, type: 'uint16' };
+            const tagSlave2: ModbusTag = { id: 2, register: 'holding', address: 1, type: 'uint16' };
+
+            const [v1, v2] = await Promise.all([master.read(tagSlave1), master.read(tagSlave2)]);
+
+            expect(writtenFrames).toHaveLength(2);
+            expect(writtenFrames[0][0]).toBe(1); // First frame is for slave 1
+            expect(writtenFrames[1][0]).toBe(2); // Second frame is for slave 2
+            expect(v1).toBe(111);
+            expect(v2).toBe(222);
+
+            await mockPort.close();
+        });
+
+        it('should NOT merge read requests when mergeRequest is set to false', async () => {
+            const mockPort = new MockPort();
+            await mockPort.open({ baudRate: 9600 });
+            const master = new ModbusMaster(mockPort);
+
+            // Explicitly disable mergeRequest for device 1
+            master.setDeviceProperty(1, { mergeRequest: false });
+
+            const writtenFrames: Uint8Array[] = [];
+            mockPort.onWrite = (chunk) => {
+                writtenFrames.push(chunk);
+                const addr = (chunk[2] << 8) | chunk[3];
+                if (addr === 0) {
+                    const resp = appendCRC16(new Uint8Array([0x01, 0x03, 0x02, 0x00, 0x0A]));
+                    mockPort.emitData(resp);
+                } else if (addr === 1) {
+                    const resp = appendCRC16(new Uint8Array([0x01, 0x03, 0x02, 0x00, 0x14]));
+                    mockPort.emitData(resp);
+                }
+            };
+
+            const tag1: ModbusTag = { id: 1, register: 'holding', address: 0, type: 'uint16' };
+            const tag2: ModbusTag = { id: 1, register: 'holding', address: 1, type: 'uint16' };
+
+            const [v1, v2] = await Promise.all([master.read(tag1), master.read(tag2)]);
+
+            expect(writtenFrames).toHaveLength(2);
+            expect(v1).toBe(10);
+            expect(v2).toBe(20);
+
+            await mockPort.close();
+        });
+
+        it('should merge coil read requests for the same device ID', async () => {
+            const mockPort = new MockPort();
+            await mockPort.open({ baudRate: 9600 });
+            const master = new ModbusMaster(mockPort);
+
+            const writtenFrames: Uint8Array[] = [];
+            mockPort.onWrite = (chunk) => {
+                writtenFrames.push(chunk);
+                // FC 1 read coils response: 1 data byte with coils:
+                // coil 0: true (bit 0 = 1), coil 1: false (bit 1 = 0), coil 2: true (bit 2 = 1) -> 0b00000101 = 0x05
+                const resp = appendCRC16(new Uint8Array([0x01, 0x01, 0x01, 0x05]));
+                mockPort.emitData(resp);
+            };
+
+            const tag1: ModbusTag = { id: 1, register: 'coil', address: 0, type: 'bool' };
+            const tag2: ModbusTag = { id: 1, register: 'coil', address: 1, type: 'bool' };
+            const tag3: ModbusTag = { id: 1, register: 'coil', address: 2, type: 'bool' };
+
+            const [b1, b2, b3] = await Promise.all([
+                master.read(tag1),
+                master.read(tag2),
+                master.read(tag3)
+            ]);
+
+            expect(writtenFrames).toHaveLength(1);
+            expect(writtenFrames[0][1]).toBe(1); // FC 0x01
+            expect(writtenFrames[0][5]).toBe(3); // Quantity 3 coils
+
+            expect(b1).toBe(true);
+            expect(b2).toBe(false);
+            expect(b3).toBe(true);
+
+            await mockPort.close();
+        });
+
+        it('should reject all batched tasks if the merged Modbus request fails', async () => {
+            const mockPort = new MockPort();
+            await mockPort.open({ baudRate: 9600 });
+            const master = new ModbusMaster(mockPort);
+
+            mockPort.onWrite = () => {
+                // Return Modbus Exception Code 2 (Illegal Data Address)
+                const exceptionResp = appendCRC16(new Uint8Array([0x01, 0x83, 0x02]));
+                mockPort.emitData(exceptionResp);
+            };
+
+            const tag1: ModbusTag = { id: 1, register: 'holding', address: 0, type: 'uint16' };
+            const tag2: ModbusTag = { id: 1, register: 'holding', address: 1, type: 'uint16' };
+
+            const p1 = master.read(tag1);
+            const p2 = master.read(tag2);
+
+            await expect(p1).rejects.toThrow("Modbus exception response: code 2");
+            await expect(p2).rejects.toThrow("Modbus exception response: code 2");
+
+            await mockPort.close();
+        });
+
+        it('should NOT merge write requests with read requests', async () => {
+            const mockPort = new MockPort();
+            await mockPort.open({ baudRate: 9600 });
+            const master = new ModbusMaster(mockPort);
+
+            const writtenFrames: Uint8Array[] = [];
+            mockPort.onWrite = (chunk) => {
+                writtenFrames.push(chunk);
+                const fc = chunk[1];
+                if (fc === 0x03) {
+                    const resp = appendCRC16(new Uint8Array([0x01, 0x03, 0x02, 0x00, 0x11]));
+                    mockPort.emitData(resp);
+                } else if (fc === 0x10) {
+                    const resp = appendCRC16(new Uint8Array([0x01, 0x10, 0x00, 0x01, 0x00, 0x01]));
+                    mockPort.emitData(resp);
+                }
+            };
+
+            const readTag: ModbusTag = { id: 1, register: 'holding', address: 0, type: 'uint16' };
+            const writeTag: ModbusTag = { id: 1, register: 'holding', address: 1, type: 'uint16', value: 99 };
+
+            const [r, w] = await Promise.all([
+                master.read(readTag),
+                master.write(writeTag)
+            ]);
+
+            expect(writtenFrames).toHaveLength(2);
+            expect(r).toBe(0x11);
+            expect(w).toBeDefined();
 
             await mockPort.close();
         });
