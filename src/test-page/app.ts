@@ -174,9 +174,14 @@ async function readHoldingRegisters() {
         return;
     }
 
-    const slaveId = parseInt(slaveIdInput.value, 10) || 1;
-    const startAddress = parseInt(startAddrInput.value, 10) || 1;
-    const quantity = parseInt(quantityInput.value, 10) || 10;
+    const rawSlave = parseInt(slaveIdInput.value, 10);
+    const slaveId = Number.isNaN(rawSlave) ? 1 : rawSlave;
+
+    const rawStartAddr = parseInt(startAddrInput.value, 10);
+    const startAddress = Number.isNaN(rawStartAddr) ? 0 : rawStartAddr;
+
+    const rawQty = parseInt(quantityInput.value, 10);
+    const quantity = (Number.isNaN(rawQty) || rawQty < 1) ? 10 : rawQty;
 
     log(`Reading holding registers ${startAddress} to ${startAddress + quantity - 1} (Slave ID: ${slaveId})...`, 'info');
     statusBadge.className = 'badge reading';
